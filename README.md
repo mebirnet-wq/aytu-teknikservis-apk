@@ -1,55 +1,47 @@
-# aytu-teknikservis-apk
-AYTU Bobinaj teknik servis Android ve iOS uygulaması
+# AYTU Bobinaj Teknik Servis — Android (Kotlin)
 
-# AYTU Bobinaj Mobil
+Native Android app project (no Flutter / React Native). The app opens the existing WordPress portal at `https://aytubobinaj.com/teknikservis/` inside a restricted WebView.
 
-Android ve iOS için Flutter tabanlı AYTU Bobinaj teknik servis uygulamasının başlangıç projesi.
+## Current configuration
 
-## Marka logosu
-Giriş ekranında AYTU Servis Pazarı logosu aşağıdaki adresten gösterilir:
+- Application ID: `com.aytubobinaj.teknikservis`
+- Debug application ID: `com.aytubobinaj.teknikservis.debug`
+- Version: `1.0.0` (debug display suffix `-debug`)
+- Minimum Android: 9 / API 28
+- Compile / target SDK: API 35
+- JDK: 17
+- Language: Kotlin
+- Internet permission only; no direct-call or SMS-send permission
 
-`https://aytubobinaj.com/wp-content/uploads/2026/10/cropped-AYTU-Servis-Pazari-Ikonu.png`
+## Security and behavior
 
-Bu kullanım için internet bağlantısı gerekir. Android/iOS ana ekran uygulama simgesine logoyu yerleştirmek için PNG dosyasının proje içinde yerel asset olarak bulunması ve platform ikonlarının ayrıca üretilmesi gerekir. Bu çalışma ortamında görsel dosyasını URL’den indirme erişimi olmadığı için yerel ikon dosyası henüz pakete eklenmemiştir.
+- HTTPS only; cleartext HTTP disabled.
+- Only `aytubobinaj.com` and the `/teknikservis/` portal are accepted as normal WebView navigation.
+- WordPress login/logout routes are allowed only through `wp-login.php` and a limited list of authentication actions. `admin-ajax.php` is allowed for the existing portal's AJAX requests.
+- Other hosts, paths and schemes are blocked. `tel:`, `sms:` and `smsto:` links are handed to the Android phone/SMS app; the app does not start calls or send SMS automatically.
+- SSL certificate errors are always cancelled, never bypassed.
+- WordPress cookies are used so the existing WordPress login/session flow can be reused. No second password store is added to the APK.
+- JavaScript is enabled because the current portal uses AJAX. File/content access, mixed content and popups are disabled.
 
-## Bu başlangıç sürümünde
-- Türkçe giriş ekranı taslağı
-- Yönetici / teknisyen demo görünümü seçimi
-- Servis özeti ve örnek servis kartları
-- Mobil uyumlu Material 3 arayüzü
+## Build on GitHub Actions
 
-> Önemli: Bu sürüm arayüz prototipidir. Kimlik doğrulama, canlı servis verileri ve WordPress API bağlantısı henüz eklenmemiştir. Ekranda görünen kayıtlar örnek veridir. Üretimde kullanmadan önce yetkilendirme ve API bağlantısı kurulmalıdır.
+1. Create a GitHub repository and upload the project files.
+2. Open **Actions → Android APK → Run workflow** (or push to `main` / `master`). The workflow provisions Gradle 8.9 and the Android SDK.
+3. Download the `aytu-bobinaj-debug-apk` artifact from the completed workflow run.
 
-## Gereksinimler
-- Flutter SDK (stable)
-- Android Studio (Android SDK ve emülatör için)
-- iOS derlemesi için macOS ve Xcode
+## Release signing
 
-## Çalıştırma
+A release APK is not signed by this workflow yet. Do not commit keystore files or passwords. For a production release, configure `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` as GitHub Actions secrets and add a release-signing step. Keep the keystore backup in a secure location separate from GitHub.
 
-```bash
-flutter doctor
-flutter pub get
-flutter run
-```
+## Important limitation of the first version
 
-## GitHub'a yükleme
-Depoyu GitHub'da `aytu-bobinaj-mobil` adıyla oluşturduktan sonra bu klasörde:
+This is a WebView wrapper around the existing portal, not a new native REST client. It depends on the site's existing portal and WordPress server-side capabilities. It does not itself add server-side administrator/technician permissions or an audit-log screen. Those require a compatible, reviewed update to the existing WordPress plugin and a live-site test. No live site has been modified by creating this project.
 
-```bash
-git init
-git add .
-git commit -m "İlk Flutter uygulama iskeleti"
-git branch -M main
-git remote add origin https://github.com/KULLANICI-ADIN/aytu-bobinaj-mobil.git
-git push -u origin main
-```
+## Test checklist
 
-`KULLANICI-ADIN` bölümünü kendi GitHub kullanıcı adınızla değiştirin.
-
-## Sonraki geliştirme adımları
-1. Mevcut WordPress eklentisinin servis kayıtlarını ve kullanıcı rollerini incelemek.
-2. WordPress REST API uç noktalarını ve güvenli kimlik doğrulamayı tasarlamak.
-3. Demo servis listesini canlı API ile değiştirmek.
-4. Servis detayları, durum güncelleme ve teknik not ekleme ekranlarını yapmak.
-5. Android ve iOS cihazlarında test etmek.
+- [ ] Confirm portal login/logout on a test WordPress account.
+- [ ] Confirm all required portal routes remain within the allowlist. If the current plugin legitimately redirects to another WordPress path, review that exact path before adding it.
+- [ ] Confirm phone links open the dialer with a number prefilled.
+- [ ] Confirm SMS links open the SMS composer with recipient/body prefilled and do not auto-send.
+- [ ] Test offline mode, back navigation, certificate errors and different screen sizes on a physical Android 9+ device.
+- [ ] Build and install the APK from the GitHub Actions artifact.
