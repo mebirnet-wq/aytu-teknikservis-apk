@@ -6,6 +6,8 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:label="AYTU Bobinaj Teknik Servis"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:supportsRtl="true">
         <activity
