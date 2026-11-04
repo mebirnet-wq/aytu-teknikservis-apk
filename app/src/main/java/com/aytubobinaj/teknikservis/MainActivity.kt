@@ -6,49 +6,71 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.net.http.SslError
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
 import android.widget.Toast
 
 class MainActivity : Activity() {
 
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
-    private lateinit var offlinePanel: LinearLayout
+    private lateinit var offlinePanel: FrameLayout
     private lateinit var message: TextView
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var retryEnabled = false
+    private var destroyed = false
 
     private val startUrl = "https://aytubobinaj.com/teknikservis/"
     private val allowedHost = "aytubobinaj.com"
     private var lastMainUrl = startUrl
+
+    private var loadId = 0
 
     companion object {
         private const val WHATSAPP_BUSINESS = "com.whatsapp.w4b"
         private const val WHATSAPP_NORMAL = "com.whatsapp"
     }
 
+    private val retryRunnable = object : Runnable {
+        override fun run() {
+            if (destroyed || !retryEnabled) return
+
+            if (isOnline()) {
+                openPortal()
+            } else {
+                handler.postDelayed(this, 5000)
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.statusBarColor = android.graphics.Color.rgb(16, 42, 37)
-        window.navigationBarColor = android.graphics.Color.rgb(16, 42, 37)
+        window.statusBarColor = Color.rgb(16, 42, 37)
+        window.navigationBarColor = Color.rgb(16, 42, 37)
 
         CookieManager.getInstance().setAcceptCookie(true)
 
@@ -62,7 +84,8 @@ class MainActivity : Activity() {
             allowContentAccess = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            mixedContentMode =
+                android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
             loadsImagesAutomatically = true
             userAgentString = "$userAgentString AYTU-Bobinaj-Android/1.0"
         }
@@ -70,19 +93,21 @@ class MainActivity : Activity() {
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = PortalWebViewClient()
 
-        if (savedInstanceState != null) {
-            webView.restoreState(savedInstanceState)
-        } else {
-            openPortal()
-        }
+        openPortal()
     }
 
     private fun buildUi() {
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFF5F7F6.toInt())
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
         }
+
+        webView = WebView(this)
+
+        root.addView(
+            webView,
+            FrameLayout.LayoutParams(-1, -1)
+        )
 
         progress = ProgressBar(
             this,
@@ -93,33 +118,137 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
 
-        root.addView(progress, LinearLayout.LayoutParams(-1, dp(3)))
+        root.addView(
+            progress,
+            FrameLayout.LayoutParams(-1, dp(3), Gravity.TOP)
+        )
 
-        webView = WebView(this)
-        root.addView(webView, LinearLayout.LayoutParams(-1, 0, 1f))
+        offlinePanel = FrameLayout(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.BLACK)
+        }
 
-        offlinePanel = LinearLayout(this).apply {
+        // Atölye arka planı
+        val background = ImageView(this).apply {
+            setImageResource(R.drawable.offline_workshop)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            contentDescription = null
+        }
+
+        offlinePanel.addView(
+            background,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+
+        // Okunabilirlik için koyu katman
+        val shade = View(this).apply {
+            setBackgroundColor(0x990A1B1D.toInt())
+        }
+
+        offlinePanel.addView(
+            shade,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(28), dp(28), dp(28), dp(28))
-            visibility = View.GONE
+            setPadding(dp(30), dp(24), dp(30), dp(24))
         }
 
-        message = TextView(this).apply {
-            text = "İnternet bağlantısı kurulamıyor. Bağlantınızı kontrol edip yeniden deneyin."
-            textSize = 17f
+        // Şeffaf AYTU logosu - orijinal oran korunur
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.aytu_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+            contentDescription = "AYTU Bobinaj"
+        }
+
+        content.addView(
+            logo,
+            LinearLayout.LayoutParams(
+                dp(235),
+                dp(100)
+            ).apply {
+                gravity = Gravity.CENTER
+                bottomMargin = dp(30)
+            }
+        )
+
+        val heading = TextView(this).apply {
+            text = "Bağlantı Kurulamıyor"
+            textSize = 24f
+            setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         }
 
-        val retry = Button(this).apply {
-            text = "Yeniden dene"
-            setOnClickListener { openPortal() }
+        content.addView(heading)
+
+        message = TextView(this).apply {
+            text = "İnternet bağlantınızı veya sunucu erişimini kontrol ediyoruz."
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(18), 0, dp(12))
         }
 
-        offlinePanel.addView(message)
-        offlinePanel.addView(retry)
+        content.addView(message)
 
-        root.addView(offlinePanel, LinearLayout.LayoutParams(-1, 0, 1f))
+        val spinner = ProgressBar(this).apply {
+            isIndeterminate = true
+        }
+
+        content.addView(
+            spinner,
+            LinearLayout.LayoutParams(dp(45), dp(45)).apply {
+                gravity = Gravity.CENTER
+                topMargin = dp(12)
+                bottomMargin = dp(12)
+            }
+        )
+
+        val waiting = TextView(this).apply {
+            text = "Lütfen bekleyiniz..."
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+
+        content.addView(waiting)
+
+        val info = TextView(this).apply {
+            text = "Bağlantı sağlandığında uygulamanız otomatik olarak açılacaktır."
+            textSize = 13f
+            setTextColor(0xFFE0E8E5.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, dp(18), 0, dp(25))
+        }
+
+        content.addView(info)
+
+        val retry = Button(this).apply {
+            text = "YENİDEN DENE"
+            setOnClickListener {
+                handler.removeCallbacks(retryRunnable)
+                retryEnabled = true
+                openPortal()
+            }
+        }
+
+        content.addView(
+            retry,
+            LinearLayout.LayoutParams(-1, dp(52))
+        )
+
+        offlinePanel.addView(
+            content,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+
+        root.addView(
+            offlinePanel,
+            FrameLayout.LayoutParams(-1, -1)
+        )
 
         setContentView(root)
     }
@@ -127,33 +256,60 @@ class MainActivity : Activity() {
     private fun openPortal() {
 
         if (!isOnline()) {
-            showOffline("İnternet bağlantısı yok. Wi-Fi veya mobil verinizi açıp yeniden deneyin.")
+            showOffline("İnternet bağlantınızı kontrol ediyoruz.")
             return
         }
 
+        loadId++
+
+        handler.removeCallbacks(retryRunnable)
+        retryEnabled = false
+
         offlinePanel.visibility = View.GONE
         webView.visibility = View.VISIBLE
-        webView.loadUrl(startUrl)
+        progress.visibility = View.VISIBLE
+
+        webView.loadUrl(lastMainUrl)
     }
 
     private fun isOnline(): Boolean {
 
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val cm = getSystemService(CONNECTIVITY_SERVICE)
+                as ConnectivityManager
+
         val network = cm.activeNetwork ?: return false
         val caps = cm.getNetworkCapabilities(network) ?: return false
 
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        return caps.hasCapability(
+            NetworkCapabilities.NET_CAPABILITY_INTERNET
+        ) && caps.hasCapability(
+            NetworkCapabilities.NET_CAPABILITY_VALIDATED
+        )
     }
 
-    private fun showOffline(text: String) {
+    private fun showOffline(
+        text: String,
+        autoRetry: Boolean = true
+    ) {
 
         message.text = text
+
+        loadId++
+
+        webView.stopLoading()
         webView.visibility = View.GONE
-        offlinePanel.visibility = View.VISIBLE
         progress.visibility = View.GONE
+        offlinePanel.visibility = View.VISIBLE
+
+        handler.removeCallbacks(retryRunnable)
+
+        retryEnabled = autoRetry
+
+        if (autoRetry) {
+            handler.postDelayed(retryRunnable, 5000)
+        }
     }
 
-    // WhatsApp bağlantılarını tespit eder.
     private fun isWhatsAppUrl(uri: Uri): Boolean {
 
         val scheme = uri.scheme?.lowercase()
@@ -162,48 +318,38 @@ class MainActivity : Activity() {
         if (scheme == "whatsapp") return true
 
         return (scheme == "https" || scheme == "http") &&
-                host in setOf(
-            "wa.me",
-            "api.whatsapp.com",
-            "www.whatsapp.com",
-            "whatsapp.com"
-        )
+            host in setOf(
+                "wa.me",
+                "api.whatsapp.com",
+                "www.whatsapp.com",
+                "whatsapp.com"
+            )
     }
 
-    // Önce WhatsApp Business, ardından normal WhatsApp denenir.
     private fun launchWhatsApp(uri: Uri) {
 
-        val packages = listOf(
+        for (packageName in listOf(
             WHATSAPP_BUSINESS,
             WHATSAPP_NORMAL
-        )
-
-        for (packageName in packages) {
-
+        )) {
             try {
-
                 val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                     setPackage(packageName)
                 }
 
                 startActivity(intent)
-
                 return
 
             } catch (_: ActivityNotFoundException) {
-
-                // Bu uygulama yüklü değil veya bağlantıyı desteklemiyor.
                 continue
-
             } catch (_: Exception) {
-
                 continue
             }
         }
 
         Toast.makeText(
             this,
-            "WhatsApp Business veya WhatsApp uygulaması bulunamadı. Lütfen WhatsApp yükleyin.",
+            "WhatsApp uygulaması bulunamadı.",
             Toast.LENGTH_LONG
         ).show()
     }
@@ -212,16 +358,17 @@ class MainActivity : Activity() {
 
         if (
             uri.scheme != "https" ||
-            !uri.host.equals(allowedHost, ignoreCase = true) ||
+            !uri.host.equals(allowedHost, true) ||
             uri.port !in listOf(-1, 443)
         ) return false
 
         val path = uri.path ?: "/"
 
-        if (path == "/teknikservis" || path == "/teknikservis/") return true
+        if (path == "/teknikservis" || path == "/teknikservis/") {
+            return true
+        }
 
         if (path == "/wp-login.php") {
-
             val action = uri.getQueryParameter("action") ?: "login"
 
             return action in setOf(
@@ -243,32 +390,11 @@ class MainActivity : Activity() {
 
         val scheme = uri.scheme?.lowercase()
 
-        if (scheme != "tel" && scheme != "sms" && scheme != "smsto") {
-
-            Toast.makeText(
-                this,
-                "Bu bağlantı uygulama içinde açılamaz.",
-                Toast.LENGTH_SHORT
-            ).show()
-
-            return
-        }
+        if (scheme !in listOf("tel", "sms", "smsto")) return
 
         try {
-
-            val intent = Intent(Intent.ACTION_VIEW, uri)
-            startActivity(intent)
-
-        } catch (_: ActivityNotFoundException) {
-
-            Toast.makeText(
-                this,
-                if (scheme == "tel") "Arama uygulaması bulunamadı." else "SMS uygulaması bulunamadı.",
-                Toast.LENGTH_LONG
-            ).show()
-
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
         } catch (_: Exception) {
-
             Toast.makeText(
                 this,
                 "Bağlantı açılamadı.",
@@ -286,36 +412,26 @@ class MainActivity : Activity() {
 
             val uri = request?.url ?: return true
 
-            // 1. WhatsApp bağlantısı önce kontrol edilir.
             if (isWhatsAppUrl(uri)) {
                 launchWhatsApp(uri)
                 return true
             }
 
-            // 2. Telefon ve SMS bağlantıları.
-            if (
-                uri.scheme.equals("tel", true) ||
-                uri.scheme.equals("sms", true) ||
-                uri.scheme.equals("smsto", true)
-            ) {
+            if (uri.scheme?.lowercase() in listOf("tel", "sms", "smsto")) {
                 launchExternal(uri)
                 return true
             }
 
-            // 3. Diğer bağlantılar mevcut güvenlik kontrolünden geçer.
             if (!allowedWebUrl(uri)) {
-
                 Toast.makeText(
                     this@MainActivity,
                     "Güvenlik nedeniyle bu sayfaya izin verilmiyor.",
                     Toast.LENGTH_SHORT
                 ).show()
-
                 return true
             }
 
             lastMainUrl = uri.toString()
-
             return false
         }
 
@@ -324,23 +440,21 @@ class MainActivity : Activity() {
             url: String?,
             favicon: Bitmap?
         ) {
-
             progress.visibility = View.VISIBLE
-
-            if (!isOnline()) {
-                showOffline("Bağlantı kesildi. İnternet bağlantınızı kontrol edin.")
-            }
         }
 
         override fun onPageFinished(
             view: WebView?,
             url: String?
         ) {
-
             progress.visibility = View.GONE
 
             if (url != null && allowedWebUrl(Uri.parse(url))) {
                 lastMainUrl = url
+                handler.removeCallbacks(retryRunnable)
+                retryEnabled = false
+                offlinePanel.visibility = View.GONE
+                webView.visibility = View.VISIBLE
             }
         }
 
@@ -349,14 +463,27 @@ class MainActivity : Activity() {
             request: WebResourceRequest?,
             error: WebResourceError?
         ) {
-
             if (request?.isForMainFrame == true) {
-
                 showOffline(
                     if (isOnline())
-                        "Sayfa yüklenemedi. Biraz sonra tekrar deneyin."
+                        "Sunucuya şu anda ulaşılamıyor. Yeniden bağlanmayı deniyoruz."
                     else
-                        "İnternet bağlantısı yok. Bağlantınızı kontrol edip yeniden deneyin."
+                        "İnternet bağlantınızı kontrol ediyoruz."
+                )
+            }
+        }
+
+        override fun onReceivedHttpError(
+            view: WebView?,
+            request: WebResourceRequest?,
+            errorResponse: android.webkit.WebResourceResponse?
+        ) {
+            if (
+                request?.isForMainFrame == true &&
+                (errorResponse?.statusCode ?: 200) >= 500
+            ) {
+                showOffline(
+                    "Sunucuda geçici bir sorun oluştu. Yeniden bağlanmayı deniyoruz."
                 )
             }
         }
@@ -366,11 +493,11 @@ class MainActivity : Activity() {
             handler: SslErrorHandler?,
             error: SslError?
         ) {
-
             handler?.cancel()
 
             showOffline(
-                "Güvenli HTTPS bağlantısı doğrulanamadı. Lütfen daha sonra tekrar deneyin."
+                "Güvenli bağlantı doğrulanamadı. Lütfen daha sonra tekrar deneyin.",
+                autoRetry = false
             )
         }
     }
@@ -378,13 +505,17 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
 
+        if (offlinePanel.visibility == View.VISIBLE) {
+            openPortal()
+            return
+        }
+
         if (::webView.isInitialized && webView.canGoBack()) {
 
             val history = webView.copyBackForwardList()
             val targetIndex = history.currentIndex - 1
 
             if (targetIndex >= 0) {
-
                 val target = history.getItemAtIndex(targetIndex).url
 
                 if (
@@ -392,45 +523,52 @@ class MainActivity : Activity() {
                         allowedWebUrl(Uri.parse(target))
                     }.getOrDefault(false)
                 ) {
-
                     webView.goBack()
-
                 } else {
-
                     Toast.makeText(
                         this,
                         "Önceki sayfaya güvenli şekilde dönülemiyor.",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
-
             } else {
-
                 super.onBackPressed()
             }
 
-        } else if (offlinePanel.visibility == View.VISIBLE) {
-
-            openPortal()
-
         } else {
-
             super.onBackPressed()
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
+    override fun onPause() {
+        handler.removeCallbacks(retryRunnable)
+        super.onPause()
+    }
 
-        super.onSaveInstanceState(outState)
+    override fun onResume() {
+        super.onResume()
 
-        if (::webView.isInitialized) {
-            webView.saveState(outState)
+        if (
+            ::offlinePanel.isInitialized &&
+            offlinePanel.visibility == View.VISIBLE &&
+            retryEnabled
+        ) {
+            handler.removeCallbacks(retryRunnable)
+            handler.postDelayed(retryRunnable, 5000)
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::webView.isInitialized) webView.saveState(outState)
+    }
+
     override fun onDestroy() {
+        destroyed = true
+        handler.removeCallbacksAndMessages(null)
 
         if (::webView.isInitialized) {
+            webView.stopLoading()
             webView.destroy()
         }
 
